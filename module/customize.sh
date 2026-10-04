@@ -2,7 +2,8 @@
 SKIPUNZIP=0
 ui_print '- DevLink: generic SSH/ADB reverse tunnel'
 case "$ARCH" in arm64|arm|x64|x86) ;; *) abort "Unsupported architecture: $ARCH" ;; esac
-mv "$MODPATH/bin/devlink-$ARCH" "$MODPATH/bin/devlink"
+mv "$MODPATH/bin/devlink-$ARCH" "$MODPATH/bin/devlink.native" || abort "Missing client for $ARCH"
+cp "$MODPATH/scripts/devlink-launcher.sh" "$MODPATH/bin/devlink" || abort "Missing launcher"
 for b in dropbear dropbearkey scp; do
  mv "$MODPATH/bin/$b-$ARCH" "$MODPATH/bin/$b" || abort "Missing $b for $ARCH"
 done

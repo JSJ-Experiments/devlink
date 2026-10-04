@@ -32,6 +32,7 @@ jobs:
           python3 tests/adb_lifecycle.py
           python3 tests/transfer.py
           python3 tests/hotreload.py
+          python3 tests/launcher.py
           for script in module/*.sh module/scripts/*.sh; do sh -n "$script"; done
       - name: Build Android module and server binaries
         env:

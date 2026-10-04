@@ -16,3 +16,4 @@
 - GitHub Actions builds run on Blacksmith.
 - Explicit unlimited Chisel library retries on all lanes, with disconnect/reconnect regression tests.
 - Fixed two-second retries (no exponential backoff) for every tunnel lane, enrollment and transfers.
+- Root launcher escapes Android app/freezer process groups so closing KernelSU Manager cannot freeze its inherited DevLink processes.

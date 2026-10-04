@@ -51,6 +51,8 @@ An endpoint contains the **base path**, not `/enroll` or `/tunnel`. Arbitrary ne
 
 ## Hot-loaded root / live updates
 
+The root launcher moves only its own process out of Android app/cached-freezer cgroups before starting the native client. Detached processes must not remain inside the KernelSU Manager app group: Android can freeze/kill that group after the manager closes, defeating reconnect logic. No global freezer setting, manager process, Box process or wake lock is changed.
+
 This module has no system mounts, metamodule, kernel/boot patch or reboot dependency. Install/update schedules a detached activation worker that waits until KernelSU finishes its installer, promotes **only DevLink's** staging directory, and starts its normal service. It never replays global ksud stages or restarts Box. Hot-root `late-load` service events work normally; the module service starts after Android boot completion.
 
 For manual reactivation or pending updates, use `devlink reload` or the WebUI **Hot reload** button. Enable/disable, endpoint changes, lane changes and ADB mode already apply live. Updates preserve identity, allocated ports, on/off state and session deadline. Hot-reloading an enabled tunnel briefly disconnects its SSH connections; the detached worker completes the restart even when invoked through that SSH connection. A disabled module stays disabled. Reboot is neither required nor automatically performed.
