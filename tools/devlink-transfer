@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 
 STOP = threading.Event()
@@ -67,27 +68,30 @@ class SSH:
                 port = self.ports[self.cursor % len(self.ports)]
                 self.cursor += 1
             command = self.command.copy(); command[command.index('-p') + 1] = str(port)
-            with subprocess.Popen(command + [script], stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
-                started = time.monotonic()
-                first = True
-                while True:
-                    if self.stop.is_set():
-                        p.kill(); p.communicate()
-                        raise Cancelled()
-                    try:
-                        out, err = p.communicate(input=data if first else None, timeout=1)
-                        break
-                    except subprocess.TimeoutExpired:
-                        first = False
-                        if time.monotonic() - started > self.args.timeout:
-                            p.kill(); out, err = p.communicate()
-                            err += b'\nTransfer command timed out'
+            # Use a seekable file for stdin. Repeated communicate(timeout=...)
+            # with input=None can stop pumping partially written PIPE input,
+            # causing slow-network uploads to hang despite a healthy tunnel.
+            with (tempfile.TemporaryFile() if data is not None else contextlib.nullcontext(subprocess.DEVNULL)) as source:
+                if data is not None:
+                    source.write(data); source.seek(0)
+                with subprocess.Popen(command + [script], stdin=source,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
+                    started = time.monotonic()
+                    while True:
+                        if self.stop.is_set():
+                            p.kill(); p.communicate()
+                            raise Cancelled()
+                        try:
+                            out, err = p.communicate(timeout=1)
                             break
+                        except subprocess.TimeoutExpired:
+                            if time.monotonic() - started > self.args.timeout:
+                                p.kill(); out, err = p.communicate()
+                                err += b'\nTransfer command timed out'
+                                break
             if p.returncode == 0:
                 return out
             msg = err.decode(errors='replace').strip()
-            # Remote filesystem/permission/path errors require fixing, not retries.
             fatal_auth = any(s in msg for s in ('Permission denied (', 'Host key verification failed',
                                                'REMOTE HOST IDENTIFICATION HAS CHANGED'))
             if fatal_auth or p.returncode not in (255, 75, -signal.SIGKILL):
@@ -95,8 +99,7 @@ class SSH:
             if self.args.retries and attempt >= self.args.retries:
                 raise RuntimeError(f'Retry limit reached: {msg}')
             say(f'Connection interrupted; pausing {delay}s then retrying: {msg[-240:]}')
-            if self.stop.wait(delay):
-                raise Cancelled()
+            if self.stop.wait(delay): raise Cancelled()
             delay = min(delay * 2, 60)
         raise Cancelled()
 
