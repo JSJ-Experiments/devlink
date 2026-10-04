@@ -565,6 +565,13 @@ func activeLanes(s state) int {
 	}
 	return s.Lanes
 }
+
+// The Chisel CLI sets MaxRetryCount=-1; NewClient's Go zero value means
+// no retries. Share an explicit policy across the primary and every extra lane.
+func tunnelConfig(s state, remotes []string, headers http.Header, caPath string) *chclient.Config {
+	return &chclient.Config{Headers: headers, Server: s.Endpoint + "/tunnel", Auth: s.Enrollment.ID + ":" + s.Secret, Fingerprint: s.Enrollment.Fingerprint, KeepAlive: 25 * time.Second, MaxRetryCount: -1, MinRetryInterval: time.Second, MaxRetryInterval: 5 * time.Minute, Remotes: remotes, TLS: chclient.TLSConfig{ServerName: s.TLSName, CA: caPath}}
+}
+
 func daemon() (retErr error) {
 	f, e := lock("run.lock", true)
 	if e != nil {
@@ -758,7 +765,7 @@ func daemon() (retErr error) {
 	if s.TLSName != "" {
 		headers.Set("Host", s.TLSName)
 	}
-	cl, e := chclient.NewClient(&chclient.Config{Headers: headers, Server: s.Endpoint + "/tunnel", Auth: s.Enrollment.ID + ":" + s.Secret, Fingerprint: s.Enrollment.Fingerprint, KeepAlive: 25 * time.Second, MaxRetryInterval: 5 * time.Minute, Remotes: remotes, TLS: chclient.TLSConfig{ServerName: s.TLSName, CA: caPath}})
+	cl, e := chclient.NewClient(tunnelConfig(s, remotes, headers, caPath))
 	if e != nil {
 		return e
 	}
@@ -783,7 +790,7 @@ func daemon() (retErr error) {
 			extras = extras[:len(extras)-1]
 		}
 		for len(extras) < desired {
-			lane, e := chclient.NewClient(&chclient.Config{Headers: headers, Server: s.Endpoint + "/tunnel", Auth: s.Enrollment.ID + ":" + s.Secret, Fingerprint: s.Enrollment.Fingerprint, KeepAlive: 25 * time.Second, MaxRetryInterval: 5 * time.Minute, Remotes: []string{fmt.Sprintf("R:127.0.0.1:%d:127.0.0.1:18022", ports[len(extras)+1])}, TLS: chclient.TLSConfig{ServerName: s.TLSName, CA: caPath}})
+			lane, e := chclient.NewClient(tunnelConfig(s, []string{fmt.Sprintf("R:127.0.0.1:%d:127.0.0.1:18022", ports[len(extras)+1])}, headers, caPath))
 			if e != nil {
 				return e
 			}
