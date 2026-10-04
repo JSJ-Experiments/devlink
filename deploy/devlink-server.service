@@ -1,0 +1,26 @@
+[Unit]
+Description=DevLink enrollment and reverse WebSocket tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=devlink
+Group=devlink
+ExecStart=/usr/local/lib/devlink/devlink-server
+Restart=on-failure
+RestartSec=10
+StateDirectory=devlink
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/devlink
+ReadWritePaths=/var/lib/devlink
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=4096
+MemoryMax=256M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

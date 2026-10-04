@@ -1,0 +1,63 @@
+name: Build DevLink
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: devlink-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r29
+      - name: Test
+        run: |
+          go test -race ./...
+          go vet ./...
+          python3 tests/adb_lifecycle.py
+          python3 tests/transfer.py
+          for script in module/*.sh module/scripts/*.sh; do sh -n "$script"; done
+      - name: Build Android module and server binaries
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          export VERSION="0.1.$(git rev-parse --short HEAD)"
+          export VERSION_CODE="$(git show -s --format=%ct HEAD)"
+          build/build.sh
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags '-s -w' -o "dist/devlink-server-linux-$arch" ./cmd/devlink-server
+          done
+          cp "dist/devlink-$VERSION.zip" dist/devlink.zip
+          cp tools/devlink-transfer dist/devlink-transfer
+          cat > dist/update.json <<JSON
+          {"version":"$VERSION","versionCode":$VERSION_CODE,"zipUrl":"https://github.com/JSJ-Experiments/devlink/releases/download/latest/devlink.zip","changelog":"https://raw.githubusercontent.com/JSJ-Experiments/devlink/main/CHANGELOG.md"}
+          JSON
+          sha256sum dist/devlink.zip dist/devlink-server-* > dist/checksums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devlink
+          path: dist/*
+      - name: Publish moving release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest dist/* --clobber
+          else
+            gh release create latest dist/* --prerelease --title 'DevLink builds' --notes 'Install devlink.zip in KernelSU. Generic rooted Android SSH/ADB tunnel. First installation auto-enrolls and enables for 2h.'
+          fi

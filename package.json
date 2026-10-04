@@ -1,0 +1,5 @@
+{
+  "name": "devlink-webui", "private": true, "version": "0.1.0", "type": "module",
+  "scripts": {"build": "esbuild webui/app.js --bundle --format=iife --minify --outfile=module/webroot/app.js"},
+  "dependencies": {"kernelsu": "^1.0.0"}, "devDependencies": {"esbuild": "^0.25.0"}
+}

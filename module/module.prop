@@ -1,0 +1,7 @@
+id=devlink
+name=DevLink
+version=0.1.0
+versionCode=1
+author=JSJ-Experiments
+description=On-demand reverse HTTPS SSH/ADB management for rooted Android devices. Auto-enrollment, timer, Box coexistence and KernelSU WebUI.
+updateJson=https://github.com/JSJ-Experiments/devlink/releases/download/latest/update.json

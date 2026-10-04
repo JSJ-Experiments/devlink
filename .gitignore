@@ -1,0 +1,9 @@
+.cache/
+dist/
+.staging/
+module/bin/*
+module/licenses/
+module/webroot/app.js
+node_modules/
+*.log
+__pycache__/

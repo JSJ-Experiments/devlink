@@ -1,0 +1,10 @@
+# Inside cfarm.jadenjsj.com (or any desired host), before catch-all handles.
+# Preserve the prefix; --path on devlink-server must match it.
+handle /devlink/* {
+    request_body {
+        max_size 8KB
+    }
+    header Cache-Control "no-store"
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    reverse_proxy 127.0.0.1:18790
+}
