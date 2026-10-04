@@ -90,7 +90,19 @@ func TestRealChiselRetriesInitialFailuresAndDroppedConnection(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("no reconnect dial")
 	}
-	if !client.Ready(ctx) {
+	// Ready may return false during the old tunnel's disconnect notification;
+	// a successful new dial is not yet a completed SSH/config handshake.
+	ready := false
+	for ctx.Err() == nil {
+		probe, stop := context.WithTimeout(ctx, 100*time.Millisecond)
+		ready = client.Ready(probe)
+		stop()
+		if ready {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !ready {
 		t.Fatal("failed to reconnect")
 	}
 	if attempts.Load() < 4 {
