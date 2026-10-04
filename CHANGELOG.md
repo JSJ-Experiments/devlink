@@ -21,3 +21,4 @@
 - Simplified release: one Android ZIP and two self-contained Linux origin bundles; stale versioned ZIPs and standalone helper assets are removed.
 - Keep Dropbear's parent OS thread alive, preventing Linux thread-bound parent-death signals from killing it prematurely; recover unexpected SSH server exits without stopping Chisel lanes.
 - Renew explicitly requested short transfer-lane leases before their deadline.
+- Refresh initial/recovered connection status immediately instead of displaying stale recovery errors until the next 25-second health tick.

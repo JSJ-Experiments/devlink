@@ -828,6 +828,10 @@ func daemon() (retErr error) {
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- cl.Wait() }()
+	// Publish initial connectivity as soon as it is ready, not only after the
+	// first 25s health tick. This waiter is scoped to the daemon context.
+	initiallyReady := make(chan bool, 1)
+	go func(ready chan<- bool) { ready <- cl.Ready(ctx) }(initiallyReady)
 	tick := time.NewTicker(25 * time.Second)
 	defer tick.Stop()
 	for {
@@ -848,10 +852,19 @@ func daemon() (retErr error) {
 				}
 				sshCmd, sshExit, e = setupSSH(s)
 				if e == nil {
+					readyCtx, cancelReady := context.WithTimeout(ctx, 100*time.Millisecond)
+					ready := cl.Ready(readyCtx)
+					cancelReady()
+					update(ready, "")
 					break
 				}
 				log.Printf("Dropbear restart: %v", e)
 				update(false, "Dropbear restart: "+e.Error())
+			}
+		case ready := <-initiallyReady:
+			initiallyReady = nil
+			if ready {
+				update(true, "")
 			}
 		case e := <-exited:
 			return e
