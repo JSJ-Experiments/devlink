@@ -31,6 +31,7 @@ async function action(args) {
 $('on').onclick = () => action(['on']);
 $('timed').onclick = () => action(['on', $('duration').value]);
 $('off').onclick = () => action(['off']);
+$('reload').onclick = () => action(['reload']);
 $('adb-on').onclick = () => action(['adb', 'on']);
 $('adb-off').onclick = () => action(['adb', 'off']);
 $('lanes-on').onclick = () => action(['lanes', '4', '15m']);

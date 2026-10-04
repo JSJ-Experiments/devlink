@@ -134,7 +134,7 @@ func stopDaemon() error {
 	if e := syscall.Kill(p, syscall.SIGTERM); e != nil {
 		return e
 	}
-	for i := 0; i < 150; i++ {
+	for i := 0; i < 300; i++ {
 		if pid() == 0 {
 			return nil
 		}
@@ -175,6 +175,29 @@ func startDaemon() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("daemon did not start; inspect devlink.log")
+}
+func activateAsync(source, installer string) error {
+	if source == "" {
+		source = mod
+	}
+	script := filepath.Join(source, "scripts", "hotreload.sh")
+	if _, e := os.Stat(script); e != nil {
+		return e
+	}
+	f, e := os.OpenFile(path("hotreload.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	c := exec.Command("/system/bin/sh", script, source, installer)
+	c.Env = os.Environ()
+	c.Stdout = f
+	c.Stderr = f
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if e = c.Start(); e != nil {
+		return e
+	}
+	return c.Process.Release()
 }
 func restartAsync() error {
 	exe, e := os.Executable()
@@ -267,6 +290,26 @@ func cli(args []string) error {
 	switch args[0] {
 	case "init":
 		return nil
+	case "stop-runtime":
+		return stopDaemon()
+	case "activate":
+		if len(args) < 2 || len(args) > 3 {
+			return errors.New("usage: devlink activate MODULE_DIR [INSTALLER_PID]")
+		}
+		parent := "0"
+		if len(args) == 3 {
+			if _, e := strconv.Atoi(args[2]); e != nil {
+				return e
+			}
+			parent = args[2]
+		}
+		return activateAsync(args[1], parent)
+	case "reload":
+		source := mod
+		if _, e := os.Stat("/data/adb/modules_update/devlink/module.prop"); e == nil {
+			source = "/data/adb/modules_update/devlink"
+		}
+		return activateAsync(source, "0")
 	case "status":
 		v := getStatus()
 		if len(args) > 1 && args[1] == "--json" {
@@ -324,6 +367,8 @@ func cli(args []string) error {
 			s.Enabled = false
 			s.Until = 0
 			s.ADB = false
+			s.Lanes = 1
+			s.LanesUntil = 0
 		}
 	case "adb":
 		if len(args) != 2 || (args[1] != "on" && args[1] != "off") {
@@ -584,6 +629,8 @@ func daemon() (retErr error) {
 				s.Enabled = false
 				s.ADB = false
 				s.Until = 0
+				s.Lanes = 1
+				s.LanesUntil = 0
 				save(s)
 			}
 			control.Close()

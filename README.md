@@ -4,7 +4,7 @@ Generic, on-demand rooted Android **SSH + optional ADB** over a reverse HTTPS/We
 
 ## Install and connect
 
-Install **[devlink.zip](https://github.com/JSJ-Experiments/devlink/releases/download/latest/devlink.zip)** in KernelSU, then reboot. First installation automatically enrolls and enables **SSH for two hours**, then turns itself off. No passwords, tokens, or keys need to be entered on the device. ADB is initially off. Upgrades preserve state.
+Install **[devlink.zip](https://github.com/JSJ-Experiments/devlink/releases/download/latest/devlink.zip)** in KernelSU. On a running/hot-rooted device it **activates immediately, without reboot**. First installation automatically enrolls and enables **SSH for two hours**, then turns itself off. No passwords, tokens, or keys need to be entered on the device. ADB is initially off. Upgrades preserve state.
 
 Open the module's **WebUI** to enable permanently, enable with a timer, disable, toggle ADB, or change the origin/subpath. The KernelSU **Action** button toggles off / on for two hours.
 
@@ -31,6 +31,7 @@ devlink on 2h        # keeps original wall-clock deadline across reboot
 devlink off          # no tunnel/keepalive/DevLink Dropbear process remains
 devlink status
 devlink status --json
+devlink reload      # apply staged update/restart this module only; no reboot
 devlink adb on
 devlink adb off
 devlink lanes 4 15m  # optional independent WebSocket/TCP lanes, with expiry
@@ -46,6 +47,12 @@ devlink endpoint http://192.168.1.2:18790/custom/path --allow-http
 ```
 
 An endpoint contains the **base path**, not `/enroll` or `/tunnel`. Arbitrary nested subpaths and custom ports work. All alternate origins must reach the **same server registry and server key**. For a separate server, build for its fingerprint, `devlink off`, then `devlink reset-enrollment` before reconnecting. Revoked identities cannot silently re-enroll themselves.
+
+## Hot-loaded root / live updates
+
+This module has no system mounts, metamodule, kernel/boot patch or reboot dependency. Install/update schedules a detached activation worker that waits until KernelSU finishes its installer, promotes **only DevLink's** staging directory, and starts its normal service. It never replays global ksud stages or restarts Box. Hot-root `late-load` service events work normally; the module service starts after Android boot completion.
+
+For manual reactivation or pending updates, use `devlink reload` or the WebUI **Hot reload** button. Enable/disable, endpoint changes, lane changes and ADB mode already apply live. Updates preserve identity, allocated ports, on/off state and session deadline. Hot-reloading an enabled tunnel briefly disconnects its SSH connections; the detached worker completes the restart even when invoked through that SSH connection. A disabled module stays disabled. Reboot is neither required nor automatically performed.
 
 ## Box and Android coexistence
 
@@ -131,6 +138,7 @@ go test -race ./...
 go vet ./...
 python3 tests/adb_lifecycle.py
 python3 tests/transfer.py
+python3 tests/hotreload.py
 npm ci && npm run build
 NDK=/path/to/android-ndk build/build.sh
 # Single-architecture local build:
