@@ -23,3 +23,4 @@
 - Renew explicitly requested short transfer-lane leases before their deadline.
 - Refresh initial/recovered connection status immediately instead of displaying stale recovery errors until the next 25-second health tick.
 - Optional ADB setup failures now roll back owned changes and report a warning without stopping SSH or the tunnel.
+- Device-selected transfers retry temporary discovery failures and wait for registered offline devices, so resuming during an origin/device disconnect does not fail at preflight.

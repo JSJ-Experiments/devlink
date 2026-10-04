@@ -22,6 +22,7 @@ import threading
 import tempfile
 import time
 import urllib.request
+import urllib.error
 
 STOP = threading.Event()
 PRINT_LOCK = threading.Lock()
@@ -347,6 +348,25 @@ def tunnel_lanes(args, ssh):
         finally:
             if was_stopped: STOP.set()
 
+def transfer_device(args, stop=STOP):
+    attempt = 0
+    while not stop.is_set():
+        attempt += 1
+        try:
+            # A registered offline device is a valid resumable-transfer target.
+            # Its stable port will retry until the device comes back online.
+            return select_device(args.device, args.endpoint, require_online=False)
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            if isinstance(error, urllib.error.HTTPError) and error.code < 500 and error.code != 429:
+                raise
+            if args.retries and attempt >= args.retries:
+                raise RuntimeError(f'Discovery retry limit reached: {error}') from error
+            say(f'Discovery unavailable; pausing 2s then retrying: {error}')
+            if stop.wait(2):
+                raise Cancelled()
+    raise Cancelled()
+
+
 def transfer_main(argv=None):
     parser = argparse.ArgumentParser(prog="devlink transfer", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('direction', choices=['push', 'pull'])
@@ -369,21 +389,18 @@ def transfer_main(argv=None):
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--keep-chunks', action='store_true')
     args = parser.parse_args(argv)
-    if args.device:
-        try:
-            device = select_device(args.device, args.endpoint, require_online=True)
-            args.host, args.port, args.user = device["ssh_host"], device["ssh_port"], device["ssh_user"]
-        except Exception as e:
-            parser.error(str(e))
     if not 1 <= args.tunnels <= 16 or not 1 <= args.jobs <= 32 or not 1 <= args.chunk_size <= 64 * 1024 * 1024:
         parser.error('tunnels must be 1..16; jobs 1..32; chunk-size 1..67108864')
-    if not 1 <= args.port <= 65535 or args.timeout < 1 or args.retries < 0 or not args.remote_state.startswith('/'):
+    if (args.port is not None and not 1 <= args.port <= 65535) or args.timeout < 1 or args.retries < 0 or not args.remote_state.startswith('/'):
         parser.error('Invalid port, timeout, retries, or remote-state')
     def stop(signum, frame):
         STOP.set()
         raise KeyboardInterrupt()
     signal.signal(signal.SIGINT, stop); signal.signal(signal.SIGTERM, stop)
     try:
+        if args.device:
+            device = transfer_device(args)
+            args.host, args.port, args.user = device["ssh_host"], device["ssh_port"], device["ssh_user"]
         ssh = SSH(args)
         with tunnel_lanes(args, ssh):
             transfer(args, ssh)

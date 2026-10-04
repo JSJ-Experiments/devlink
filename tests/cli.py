@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import contextlib
+import argparse
 import http.server
 import io
 import json
@@ -10,6 +11,7 @@ import shlex
 import subprocess
 import threading
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 TOOL = Path(__file__).resolve().parents[1] / 'tools/devlink'
@@ -89,6 +91,25 @@ class CLI(unittest.TestCase):
             result = NS['transfer_main'](['push', './file', '/sdcard/file', '--device', 'phone'])
         self.assertEqual(result, 0)
         self.assertEqual((captured[0].host, captured[0].port, captured[0].user), ('127.0.0.1', 18622, 'root'))
+
+    def test_transfer_retries_discovery_at_fixed_delay_and_accepts_offline(self):
+        waits = []
+        class Stop:
+            def is_set(self): return False
+            def wait(self, seconds): waits.append(seconds); return False
+        globals_ = NS['transfer_device'].__globals__
+        args = argparse.Namespace(device='phone', endpoint='http://127.0.0.1:18792/devices', retries=0)
+        with patch.dict(globals_, say=lambda _: None), patch.dict(globals_, select_device=unittest.mock.Mock(side_effect=[urllib.error.URLError('connection refused'), TimeoutError('timeout'), dict(DEVICE, connected=False)])):
+            result = NS['transfer_device'](args, Stop())
+            self.assertFalse(result['connected'])
+            self.assertEqual(globals_['select_device'].call_args.kwargs, {'require_online': False})
+        self.assertEqual(waits, [2, 2])
+        with patch.dict(globals_, select_device=unittest.mock.Mock(side_effect=RuntimeError('revoked'))):
+            with self.assertRaisesRegex(RuntimeError, 'revoked'):
+                NS['transfer_device'](args, Stop())
+        with patch.dict(globals_, select_device=unittest.mock.Mock(side_effect=urllib.error.HTTPError(args.endpoint, 404, 'not found', {}, None))):
+            with self.assertRaises(urllib.error.HTTPError):
+                NS['transfer_device'](args, Stop())
 
     def test_help_and_legacy_aliases(self):
         for argv in (['--help'], ['devices', '--help'], ['transfer', '--help'], ['ssh', '--help']):
