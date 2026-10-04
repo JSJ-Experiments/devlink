@@ -576,6 +576,34 @@ func setupSSH(s state) (*exec.Cmd, <-chan error, error) {
 	}
 	return c, exited, nil
 }
+
+// Optional ADB failures must not take permanent SSH access down. Roll back
+// any partially owned listener before continuing with SSH-only forwarding.
+func setupOptionalADB(s state, action func(string) (string, error)) (int, error) {
+	if s.Enrollment.ADBKey != "" {
+		if e := link.WriteFile(path("adbkey.pub"), []byte(s.Enrollment.ADBKey+"\n"), 0600); e != nil {
+			return 0, e
+		}
+	}
+	output, e := action("on")
+	port := 0
+	if e == nil {
+		port, e = strconv.Atoi(output)
+		if e != nil || port < 1 || port > 65535 {
+			e = fmt.Errorf("ADB helper returned invalid port: %q", output)
+		}
+	} else {
+		e = fmt.Errorf("%s: %w", output, e)
+	}
+	if e != nil {
+		if output, cleanupErr := action("off"); cleanupErr != nil {
+			log.Printf("ADB rollback: %s: %v", output, cleanupErr)
+		}
+		return 0, e
+	}
+	return port, nil
+}
+
 func disabled() bool {
 	for _, f := range []string{"disable", "remove"} {
 		if _, e := os.Stat(filepath.Join(mod, f)); e == nil {
@@ -683,7 +711,11 @@ func daemon() (retErr error) {
 	if !s.Enabled || disabled() {
 		return nil
 	}
+	warning := ""
 	update := func(connected bool, err string) {
+		if err == "" {
+			err = warning
+		}
 		v := getStatus()
 		v.Connected = connected
 		v.Error = err
@@ -738,26 +770,18 @@ func daemon() (retErr error) {
 	}()
 	adbPort := 0
 	if s.ADB {
-		if s.Enrollment.ADBKey != "" {
-			if e = link.WriteFile(path("adbkey.pub"), []byte(s.Enrollment.ADBKey+"\n"), 0600); e != nil {
-				return e
-			}
-		}
-		p, e := helper("on")
+		adbPort, e = setupOptionalADB(s, helper)
 		if e != nil {
-			helper("off")
-			update(false, "ADB: "+p)
-			return fmt.Errorf("ADB: %s: %w", p, e)
+			warning = "ADB unavailable (SSH stays enabled): " + e.Error()
+			log.Print(warning)
+			update(false, "")
+		} else {
+			defer func() {
+				if output, e := helper("off"); e != nil {
+					log.Printf("ADB cleanup: %s: %v", output, e)
+				}
+			}()
 		}
-		adbPort, e = strconv.Atoi(p)
-		if e != nil {
-			return fmt.Errorf("ADB helper returned invalid port: %q", p)
-		}
-		defer func() {
-			if p, e := helper("off"); e != nil {
-				log.Printf("ADB cleanup: %s: %v", p, e)
-			}
-		}()
 	}
 	remotes := []string{fmt.Sprintf("R:127.0.0.1:%d:127.0.0.1:18022", link.LanePorts(*s.Enrollment)[0])}
 	if adbPort > 0 {
