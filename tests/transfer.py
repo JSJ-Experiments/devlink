@@ -60,6 +60,18 @@ class Lanes(unittest.TestCase):
   with patch.dict(ns['tunnel_lanes'].__wrapped__.__globals__,SSH=FakeSSH):
    with ns['tunnel_lanes'](args,ssh):self.assertEqual(ssh.ports,[18622]*4)
   self.assertEqual(calls,['/devlink status --json','/devlink lanes 4','/devlink lanes 1'])
+ def test_shrink_eof_is_confirmed_before_warning(self):
+  ns=runpy.run_path(str(TOOL));calls=[];messages=[]
+  class FakeSSH:
+   def __init__(self,*a,**kw):self.ports=[]
+   def run(self,command):
+    calls.append(command)
+    if command.endswith('lanes 1'):raise RuntimeError('closed its own lane')
+    return json.dumps({'ssh_port':18622,'lanes_available':4,'lanes':1}) if command.endswith('status --json') else ''
+  args=argparse.Namespace(tunnels=4,client='/devlink',lane_lease='',timeout=30,retries=0)
+  with patch.dict(ns['tunnel_lanes'].__wrapped__.__globals__,SSH=FakeSSH,say=messages.append):
+   with ns['tunnel_lanes'](args,FakeSSH()):pass
+  self.assertEqual(calls[-2:],['/devlink lanes 1','/devlink status --json']);self.assertEqual(messages,[])
  def test_explicit_lease_is_one_shell_argument(self):
   ns=runpy.run_path(str(TOOL));calls=[]
   class FakeSSH:

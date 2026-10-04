@@ -300,11 +300,12 @@ def tunnel_lanes(args, ssh):
         stopped.set()
         thread.join(timeout=2)
         # Cancellation must still clean up online devices. Offline cleanup gets
-        # one bounded attempt; only an explicitly requested lease expires.
+        # bounded attempts; only an explicitly requested lease expires.
         cleanup_args = argparse.Namespace(**vars(args)); cleanup_args.timeout = 10; cleanup_args.retries = 1
         cleanup = SSH(cleanup_args)
         old_lanes = previous.get('lanes', 1)
         remaining = previous.get('lanes_until', 0) - int(time.time())
+        restored_lanes = old_lanes if not previous.get('lanes_until') or remaining > 0 else 1
         command = shlex.quote(args.client) + f' lanes {old_lanes}'
         if previous.get('lanes_until'):
             command = shlex.quote(args.client) + (f' lanes {old_lanes} {remaining}s' if remaining > 0 else ' lanes 1')
@@ -313,8 +314,15 @@ def tunnel_lanes(args, ssh):
         try:
             cleanup.run(command)
         except Exception as e:
-            recovery = 'extra lanes expire automatically' if lease else 'run devlink lanes 1 when reconnected'
-            say(f'Could not restore lane count now ({recovery}): {e}')
+            # A pooled control connection may itself use a lane being removed.
+            # Its EOF can mean the command succeeded, not that restoration failed.
+            try:
+                actual = json.loads(cleanup.run(shlex.quote(args.client) + ' status --json'))
+                if actual.get('lanes') != restored_lanes:
+                    raise RuntimeError('lane count not restored')
+            except Exception:
+                recovery = 'extra lanes expire automatically' if lease else 'run devlink lanes 1 when reconnected'
+                say(f'Could not confirm restored lane count ({recovery}): {e}')
         finally:
             if was_stopped: STOP.set()
 
