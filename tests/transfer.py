@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse, hashlib, json, os, pathlib, runpy, shlex, subprocess, tempfile, unittest
 from unittest.mock import patch
-TOOL = pathlib.Path(__file__).resolve().parents[1] / 'tools/devlink-transfer'
+TOOL = pathlib.Path(__file__).resolve().parents[1] / 'tools/devlink'
 MOCK = '''#!/usr/bin/env python3
 import os,sys,subprocess,pathlib,time
 r=pathlib.Path(os.environ['MOCK_ROOT']);cmd=sys.argv[-1]
@@ -25,7 +25,7 @@ class Transfer(unittest.TestCase):
   self.src=self.root/"source ' quoted.bin";self.remote=self.root/"remote ' quoted.bin";self.dest=self.root/'result.bin';self.src.write_bytes(os.urandom(12001))
  def tearDown(self):self.tmp.cleanup()
  def run_tool(self,direction,src,dst,*opts):
-  return subprocess.run([str(TOOL),direction,str(src),str(dst),'--port','18622','--tunnels','1','--jobs','2','--chunk-size','4096','--state-dir',str(self.root/'state'),'--remote-state',str(self.root/'remote-state'),*opts],env=self.env,text=True,capture_output=True)
+  return subprocess.run([str(TOOL),'transfer',direction,str(src),str(dst),'--port','18622','--tunnels','1','--jobs','2','--chunk-size','4096','--state-dir',str(self.root/'state'),'--remote-state',str(self.root/'remote-state'),*opts],env=self.env,text=True,capture_output=True)
  def test_push_pull_and_idempotence(self):
   r=self.run_tool('push',self.src,self.remote);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(self.src.read_bytes(),self.remote.read_bytes())
   r=self.run_tool('push',self.src,self.remote);self.assertIn('already matches',r.stderr)
@@ -93,8 +93,17 @@ class Lanes(unittest.TestCase):
    def run(self,command):
     calls.append(command)
     return json.dumps({'ssh_port':18622,'lanes_available':4,'lanes':1}) if command.endswith('status --json') else ''
-  args=argparse.Namespace(tunnels=4,client='/devlink',lane_lease='15m; evil',timeout=30,retries=0)
+  args=argparse.Namespace(tunnels=4,client='/devlink',lane_lease='15m',timeout=30,retries=0)
   with patch.dict(ns['tunnel_lanes'].__wrapped__.__globals__,SSH=FakeSSH):
    with ns['tunnel_lanes'](args,FakeSSH()):pass
-  self.assertEqual(shlex.split(calls[1]),['/devlink','lanes','4','15m; evil'])
+  self.assertEqual(shlex.split(calls[1]),['/devlink','lanes','4','15m'])
+ def test_short_explicit_lease_renews_before_expiry(self):
+  ns=runpy.run_path(str(TOOL))
+  self.assertEqual(ns['lease_interval']('45s'),15)
+  self.assertEqual(ns['lease_interval']('1h30m'),120)
+  self.assertAlmostEqual(ns['lease_interval']('.5m'),10)
+  for value in ('0s', '-1m', '15m; evil', '1m garbage', ''):
+   if value:
+    with self.assertRaises(ValueError):ns['lease_interval'](value)
+   else:self.assertEqual(ns['lease_interval'](value),120)
 if __name__=='__main__':unittest.main()

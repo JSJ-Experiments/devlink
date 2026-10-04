@@ -10,18 +10,21 @@ PREFIX=${PREFIX:-/devlink}
 getent passwd devlink >/dev/null || useradd --system --home-dir /var/lib/devlink --shell /usr/sbin/nologin devlink
 install -d -m 0755 /usr/local/lib/devlink
 install -d -m 0750 -o root -g devlink /etc/devlink
+if [[ -z ${SERVER_BINARY:-} && -f ./devlink-server ]]; then SERVER_BINARY="$PWD/devlink-server"; fi
 if [[ -n ${SERVER_BINARY:-} ]]; then
  install -m 0755 "$SERVER_BINARY" /usr/local/lib/devlink/devlink-server
 else
  go build -trimpath -ldflags '-s -w' -o .cache-devlink-server ./cmd/devlink-server
  install -m 0755 .cache-devlink-server /usr/local/lib/devlink/devlink-server
- rm -f .cache-devlink-server
+ unlink .cache-devlink-server
 fi
 install -m 0644 "$SSH_KEYS" /etc/devlink/authorized_keys
 [[ -z ${ADB_KEY:-} ]] || install -m 0644 "$ADB_KEY" /etc/devlink/adbkey.pub
 sed "s#^ExecStart=.*#ExecStart=/usr/local/lib/devlink/devlink-server --path $PREFIX#" deploy/devlink-server.service > /etc/systemd/system/devlink-server.service
-install -m 0755 tools/devlink-transfer /usr/local/bin/devlink-transfer
-install -m 0755 tools/devlink-devices /usr/local/bin/devlink-devices
+CLI=tools/devlink
+[[ ! -f ./devlink ]] || CLI=./devlink
+install -m 0755 "$CLI" /usr/local/bin/devlink
+ln -sfn /usr/local/lib/devlink/devlink-server /usr/local/bin/devlink-server
 systemctl daemon-reload
 systemctl enable devlink-server
 systemctl restart devlink-server

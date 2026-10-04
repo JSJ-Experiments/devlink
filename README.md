@@ -11,8 +11,10 @@ Open the module's **WebUI** to enable permanently, enable with a timer, disable,
 On the origin server:
 
 ```sh
-devlink-devices --connected
-# Read that device's allocated SSH/ADB ports, then:
+devlink devices --connected
+# Select by device ID, unique ID prefix, or unique model label:
+devlink ssh DEVICE
+# Direct SSH still works with the allocated stable port:
 ssh root@127.0.0.1 -p 18622
 adb connect 127.0.0.1:18623  # only after enabling DevLink ADB
 ```
@@ -51,7 +53,7 @@ An endpoint contains the **base path**, not `/enroll` or `/tunnel`. Arbitrary ne
 
 ## Hot-loaded root / live updates
 
-The root launcher moves only its own process out of Android app/cached-freezer cgroups before starting the native client. Detached processes must not remain inside the KernelSU Manager app group: Android can freeze/kill that group after the manager closes, defeating reconnect logic. No global freezer setting, manager process, Box process or wake lock is changed.
+The root launcher moves only its own process out of Android app/cached-freezer cgroups before starting the native client. Detached processes must not remain inside the KernelSU Manager app group: Android can freeze/kill that group after the manager closes, defeating reconnect logic. No global freezer setting, manager process, Box process or wake lock is changed. The Dropbear launching thread stays alive for the child lifetime (Linux parent-death signals are thread-bound). If Dropbear exits unexpectedly, the daemon restarts it with a fixed two-second retry delay while keeping tunnel lanes alive; old SSH sessions close, so do not replay non-idempotent commands blindly.
 
 This module has no system mounts, metamodule, kernel/boot patch or reboot dependency. Install/update schedules a detached activation worker that waits until KernelSU finishes its installer, promotes **only DevLink's** staging directory, and starts its normal service. It never replays global ksud stages or restarts Box. Hot-root `late-load` service events work normally; the module service starts after Android boot completion.
 
@@ -70,17 +72,17 @@ For file transfer, use `scp -O` (bundled SCP; SFTP is not built in). SSH local f
 
 ## Parallel resumable transfers
 
-Use `tools/devlink-transfer` on the origin (Python 3 + OpenSSH only; no Android Python, rsync or SFTP required):
+Use `devlink transfer` on the origin (Python 3 + OpenSSH only; no Android Python, rsync or SFTP required):
 
 ```sh
 # The helper automatically enables up to four independent Chisel/TCP lanes.
-tools/devlink-transfer push ./large.apk /sdcard/Download/large.apk --port 18622
-tools/devlink-transfer pull /sdcard/Movies/capture.mp4 ./capture.mp4 --port 18622
+devlink transfer push ./large.apk /sdcard/Download/large.apk --device DEVICE
+devlink transfer pull /sdcard/Movies/capture.mp4 ./capture.mp4 --device DEVICE
 # Adjust concurrency/chunk size; --overwrite is explicit.
-tools/devlink-transfer push ./archive.zip /data/local/tmp/archive.zip \
+devlink transfer push ./archive.zip /data/local/tmp/archive.zip \
   --port 18622 --jobs 4 --chunk-size 8388608 --overwrite
 # Works through the old Box SSH/Tailscale path too, but without extra lanes:
-tools/devlink-transfer push ./file.bin /sdcard/file.bin \
+devlink transfer push ./file.bin /sdcard/file.bin \
   --host mihomo-6sp-arm --port 8022 --tunnels 1
 ```
 
@@ -97,21 +99,29 @@ This version transfers **one regular file per invocation**, not a directory tree
 Run on the origin server (no root or registry-file access required):
 
 ```sh
-devlink-devices --connected         # labels and ready-to-use SSH/ADB commands
-devlink-devices --connected --json  # machine-readable records
+devlink devices --connected         # labels and ready-to-use SSH/ADB commands
+devlink devices --connected --json  # machine-readable records
+devlink info DEVICE                # one device, JSON
+devlink ssh DEVICE -- sh -c 'id; uname -a'
+devlink adb DEVICE -- shell id      # after enabling device-side ADB
 curl -fsS 'http://127.0.0.1:18792/devices?connected=1'
 ```
 
 Records include device ID/model label, `connected`, `active_lanes`, `ssh_host`, `ssh_port`, `ssh_user`, `adb_host`, `adb_port`, and `adb_forwarding`; never enrollment credentials or keys. Omit `--connected` to include offline/revoked enrollments. The API is **loopback-only and not exposed by Caddy/Cloudflare**; remote agents should SSH into the origin or forward that local port. Do not make a public Caddy route to it.
 
+The host CLI refuses ambiguous labels/ID prefixes, revoked devices, and known-offline devices. `devlink ssh` does not replay commands after a disconnect (the first execution may already have changed state). The old `devlink-devices`/`devlink-transfer` names remain compatibility wrappers in the source tree/existing deployments, but are not separate release downloads.
+
 Discovery inspects Linux reverse-listener state without waking devices with SSH probes. A disconnected network may remain marked connected until Chisel detects the dead connection; agents should still retry SSH. `adb_forwarding` means the reverse listener exists, not proof that Android authorized the host or adbd is healthy. Device labels are untrusted descriptive metadata, not ownership verification.
 
 ## Origin deployment
 
+The [latest release](https://github.com/JSJ-Experiments/devlink/releases/tag/latest) has **one Android installer**, `devlink.zip`, and **two Linux origin bundles**: `devlink-origin-linux-arm64.tar.gz` (ARM64) / `devlink-origin-linux-amd64.tar.gz` (x86-64). Extract the matching bundle and run its `deploy/install-server.sh` below. It installs `devlink-server` (daemon/admin) and `devlink` (agent/user tools); Python 3, OpenSSH, systemd and Caddy are required. No standalone helper downloads are necessary. `checksums.txt` verifies the ZIP, bundles and `update.json`; the latter is automatic-update metadata, not another installer.
+
 The origin listens on **loopback only**: HTTP gateway `127.0.0.1:18790`, Chisel `127.0.0.1:18791`, agent discovery `127.0.0.1:18792`, and each device's allocated SSH/ADB and private backend ports. No tablet SSH/ADB listener is exposed to the Internet. The public surface is HTTPS `/BASE/enroll`, `/BASE/tunnel`, and `/BASE/health` only; the device registry has no public list/admin API.
 
 ```sh
-# Build locally, or supply SERVER_BINARY=... from a GitHub release.
+# Run from the source tree OR an extracted origin bundle.
+# Bundles contain a prebuilt server; the source installer builds it with Go.
 sudo env SSH_KEYS="$HOME/.ssh/id_ed25519.pub" \
   ADB_KEY="$HOME/.android/adbkey.pub" PREFIX=/devlink \
   ./deploy/install-server.sh
@@ -128,8 +138,8 @@ The server exposes **one configured prefix at a time**. When migrating without d
 For Cloudflare, keep WebSockets enabled, bypass cache/challenges/interactive Access for this subpath, and use HTTPS. Do not put an additional interactive login in front of enrollment/tunnel. The Chisel fingerprint authenticates the inner encrypted tunnel despite CDN TLS termination. Enrollment uses verified HTTPS; Cloudflare is trusted for that bootstrap.
 
 ```sh
-sudo /usr/local/lib/devlink/devlink-server devices
-sudo /usr/local/lib/devlink/devlink-server revoke DEVICE_ID
+sudo devlink-server devices
+sudo devlink-server revoke DEVICE_ID
 sudo systemctl restart devlink-server  # applies revocation, disconnects all current tunnels
 sudo journalctl -u devlink-server
 ```
@@ -158,6 +168,9 @@ go vet ./...
 python3 tests/adb_lifecycle.py
 python3 tests/transfer.py
 python3 tests/hotreload.py
+python3 tests/launcher.py
+python3 tests/cli.py
+python3 tests/packaging.py
 npm ci && npm run build
 NDK=/path/to/android-ndk build/build.sh
 # Single-architecture local build:
@@ -169,6 +182,6 @@ ENDPOINT=https://YOUR_HOST/custom FINGERPRINT='BASE64_SHA256=' \
 
 `deploy/public.json` contains only public endpoint/fingerprint defaults. Build outputs are ignored, secrets are never part of the repository. Android clients use **Android/Bionic cgo DNS**, not Linux's `/etc/resolv.conf` fallback. Android CA stores are explicitly loaded; certificate validation is not disabled. Dropbear is checksum-pinned, patched for Android's root home permissions (same patch as the tested Box build), and compiled without password authentication. Chisel is pinned via `go.mod`/`go.sum` to v1.12.0.
 
-GitHub Actions on Blacksmith runners builds all four Android architectures, runs lifecycle/auth/real-tunnel tests, publishes the module and amd64/arm64 origin binaries, and updates a moving `latest` prerelease. Module WebUI bundles the official `kernelsu` API locally (no external assets).
+GitHub Actions on Blacksmith runners builds all four Android architectures, runs lifecycle/auth/real-tunnel tests, publishes one module ZIP and self-contained amd64/arm64 origin bundles, and updates a moving `latest` prerelease. Module WebUI bundles the official `kernelsu` API locally (no external assets).
 
 Primary references: [Chisel](https://github.com/jpillora/chisel), [KernelSU module guide](https://kernelsu.org/guide/module.html), [KernelSU WebUI](https://kernelsu.org/guide/module-webui.html). Box's local tested implementation informed the Dropbear patch and ADB property/firewall handling.

@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -526,19 +527,42 @@ func helper(action string) (string, error) {
 	b, e := c.CombinedOutput()
 	return strings.TrimSpace(string(b)), e
 }
-func setupSSH(s state) (*exec.Cmd, error) {
-	sshDir := path("ssh")
-	if e := os.MkdirAll(sshDir, 0700); e != nil {
+
+// Linux Pdeathsig belongs to the creating OS thread, not the Go process.
+// Keep that thread alive until the child has exited, so runtime thread cleanup
+// cannot accidentally terminate Dropbear while the tunnel daemon is healthy.
+func startParentBoundProcess(c *exec.Cmd) (<-chan error, error) {
+	started := make(chan error, 1)
+	exited := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		if e := c.Start(); e != nil {
+			started <- e
+			return
+		}
+		started <- nil
+		exited <- c.Wait()
+	}()
+	if e := <-started; e != nil {
 		return nil, e
 	}
+	return exited, nil
+}
+
+func setupSSH(s state) (*exec.Cmd, <-chan error, error) {
+	sshDir := path("ssh")
+	if e := os.MkdirAll(sshDir, 0700); e != nil {
+		return nil, nil, e
+	}
 	if e := link.WriteFile(filepath.Join(sshDir, "authorized_keys"), []byte(s.Enrollment.SSHKeys), 0600); e != nil {
-		return nil, e
+		return nil, nil, e
 	}
 	key := filepath.Join(sshDir, "host_ed25519")
 	if _, e := os.Stat(key); os.IsNotExist(e) {
 		c := exec.Command(filepath.Join(mod, "bin", "dropbearkey"), "-t", "ed25519", "-f", key)
 		if b, e := c.CombinedOutput(); e != nil {
-			return nil, fmt.Errorf("host key: %s: %w", b, e)
+			return nil, nil, fmt.Errorf("host key: %s: %w", b, e)
 		}
 	}
 	c := exec.Command(filepath.Join(mod, "bin", "dropbear"), "-F", "-e", "-p", "127.0.0.1:18022", "-P", path("dropbear.pid"), "-r", key, "-D", sshDir, "-I", "600")
@@ -546,10 +570,11 @@ func setupSSH(s state) (*exec.Cmd, error) {
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
-	if e := c.Start(); e != nil {
-		return nil, e
+	exited, e := startParentBoundProcess(c)
+	if e != nil {
+		return nil, nil, e
 	}
-	return c, nil
+	return c, exited, nil
 }
 func disabled() bool {
 	for _, f := range []string{"disable", "remove"} {
@@ -696,16 +721,14 @@ func daemon() (retErr error) {
 	if ctx.Err() != nil || !s.Enabled {
 		return nil
 	}
-	sshCmd, e := setupSSH(s)
+	sshCmd, sshExit, e := setupSSH(s)
 	if e != nil {
 		update(false, e.Error())
 		return e
 	}
-	sshExit := make(chan error, 1)
-	go func() { sshExit <- sshCmd.Wait() }()
 	// Killing the process group also closes established SSH sessions.
 	defer func() {
-		if sshCmd.Process != nil {
+		if sshCmd != nil && sshCmd.Process != nil {
 			syscall.Kill(-sshCmd.Process.Pid, syscall.SIGTERM)
 			select {
 			case <-sshExit:
@@ -812,8 +835,24 @@ func daemon() (retErr error) {
 		case <-ctx.Done():
 			return nil
 		case e := <-sshExit:
-			update(false, "Dropbear exited")
-			return fmt.Errorf("Dropbear exited: %v", e)
+			// Restart just the local SSH server. Chisel lanes remain alive;
+			// no watchdog shell, Box restart or enrollment change is needed.
+			log.Printf("Dropbear exited (%v); restarting in %s", e, reconnectDelay)
+			update(false, "Dropbear exited; restarting")
+			syscall.Kill(-sshCmd.Process.Pid, syscall.SIGTERM)
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(reconnectDelay):
+				}
+				sshCmd, sshExit, e = setupSSH(s)
+				if e == nil {
+					break
+				}
+				log.Printf("Dropbear restart: %v", e)
+				update(false, "Dropbear restart: "+e.Error())
+			}
 		case e := <-exited:
 			return e
 		case <-hup:

@@ -33,7 +33,9 @@ jobs:
           python3 tests/transfer.py
           python3 tests/hotreload.py
           python3 tests/launcher.py
-          for script in module/*.sh module/scripts/*.sh; do sh -n "$script"; done
+          python3 tests/cli.py
+          python3 tests/packaging.py
+          for script in module/*.sh module/scripts/*.sh build/*.sh deploy/*.sh; do sh -n "$script"; done
       - name: Build Android module and server binaries
         env:
           NDK: ${{ steps.ndk.outputs.ndk-path }}
@@ -41,26 +43,31 @@ jobs:
           export VERSION="0.1.$(git rev-parse --short HEAD)"
           export VERSION_CODE="$(git show -s --format=%ct HEAD)"
           build/build.sh
-          for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags '-s -w' -o "dist/devlink-server-linux-$arch" ./cmd/devlink-server
-          done
-          cp "dist/devlink-$VERSION.zip" dist/devlink.zip
-          cp tools/devlink-transfer dist/devlink-transfer
-          cp tools/devlink-devices dist/devlink-devices
-          cat > dist/update.json <<JSON
+          build/package-origin.sh
+          cp "dist/devlink-$VERSION.zip" dist/release/devlink.zip
+          cat > dist/release/update.json <<JSON
           {"version":"$VERSION","versionCode":$VERSION_CODE,"zipUrl":"https://github.com/JSJ-Experiments/devlink/releases/download/latest/devlink.zip","changelog":"https://raw.githubusercontent.com/JSJ-Experiments/devlink/main/CHANGELOG.md"}
           JSON
-          sha256sum dist/devlink.zip dist/devlink-server-* > dist/checksums.txt
+          (cd dist/release && sha256sum devlink.zip devlink-origin-*.tar.gz update.json > checksums.txt)
       - uses: actions/upload-artifact@v4
         with:
           name: devlink
-          path: dist/*
+          path: dist/release/*
       - name: Publish moving release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest dist/* --clobber
+            gh release upload latest dist/release/* --clobber
           else
-            gh release create latest dist/* --prerelease --title 'DevLink builds' --notes 'Install devlink.zip in KernelSU. Generic rooted Android SSH/ADB tunnel. First installation auto-enrolls and enables for 2h.'
+            gh release create latest dist/release/* --prerelease --target "$GITHUB_SHA" --title 'DevLink builds' --notes 'DevLink builds'
           fi
+          # Prune old versioned ZIPs/standalone helpers only after new assets exist.
+          gh release view latest --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              devlink.zip|devlink-origin-linux-amd64.tar.gz|devlink-origin-linux-arm64.tar.gz|checksums.txt|update.json) ;;
+              *) gh release delete-asset latest "$asset" --yes ;;
+            esac
+          done
+          gh api --method PATCH 'repos/{owner}/{repo}/git/refs/tags/latest' -f sha="$GITHUB_SHA" -F force=true --silent
+          gh release edit latest --title 'DevLink: Android module + origin tools' --notes-file deploy/release-notes.md
