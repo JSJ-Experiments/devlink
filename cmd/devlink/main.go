@@ -566,10 +566,13 @@ func activeLanes(s state) int {
 	return s.Lanes
 }
 
+const reconnectDelay = 2 * time.Second
+
+// Equal minimum/maximum intervals disable exponential delay growth.
 // The Chisel CLI sets MaxRetryCount=-1; NewClient's Go zero value means
 // no retries. Share an explicit policy across the primary and every extra lane.
 func tunnelConfig(s state, remotes []string, headers http.Header, caPath string) *chclient.Config {
-	return &chclient.Config{Headers: headers, Server: s.Endpoint + "/tunnel", Auth: s.Enrollment.ID + ":" + s.Secret, Fingerprint: s.Enrollment.Fingerprint, KeepAlive: 25 * time.Second, MaxRetryCount: -1, MinRetryInterval: time.Second, MaxRetryInterval: 5 * time.Minute, Remotes: remotes, TLS: chclient.TLSConfig{ServerName: s.TLSName, CA: caPath}}
+	return &chclient.Config{Headers: headers, Server: s.Endpoint + "/tunnel", Auth: s.Enrollment.ID + ":" + s.Secret, Fingerprint: s.Enrollment.Fingerprint, KeepAlive: 25 * time.Second, MaxRetryCount: -1, MinRetryInterval: reconnectDelay, MaxRetryInterval: reconnectDelay, Remotes: remotes, TLS: chclient.TLSConfig{ServerName: s.TLSName, CA: caPath}}
 }
 
 func daemon() (retErr error) {
@@ -606,7 +609,7 @@ func daemon() (retErr error) {
 			}
 		}
 	}()
-	// Expiry/disable detection also runs during offline enrollment backoff.
+	// Expiry/disable detection also runs during offline enrollment retry waits.
 	go func() {
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
@@ -662,7 +665,7 @@ func daemon() (retErr error) {
 		link.WriteJSON(path("status.json"), v)
 	}
 	update(false, "")
-	for delay := time.Second; s.Enrollment == nil || len(s.Enrollment.TunnelPorts) == 0; {
+	for s.Enrollment == nil || len(s.Enrollment.TunnelPorts) == 0 {
 		en, e := enroll(ctx, s)
 		if e == nil {
 			// Preserve control changes made while enrollment was in flight.
@@ -687,11 +690,7 @@ func daemon() (retErr error) {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(delay):
-		}
-		delay *= 2
-		if delay > 5*time.Minute {
-			delay = 5 * time.Minute
+		case <-time.After(reconnectDelay):
 		}
 	}
 	if ctx.Err() != nil || !s.Enabled {

@@ -25,11 +25,11 @@ func testFreePort(t *testing.T) int {
 	l.Close()
 	return p
 }
-func TestEveryLaneHasUnlimitedBoundedRetries(t *testing.T) {
+func TestEveryLaneHasUnlimitedFixedRetries(t *testing.T) {
 	s := state{Endpoint: "https://example.com/custom", Secret: "secret", Enrollment: &link.Enrollment{ID: "device", Fingerprint: "pinned"}}
 	for _, remotes := range [][]string{{"R:127.0.0.1:22000:127.0.0.1:18022", "R:127.0.0.1:18623:127.0.0.1:5555"}, {"R:127.0.0.1:22001:127.0.0.1:18022"}} {
 		c := tunnelConfig(s, remotes, http.Header{}, "")
-		if c.MaxRetryCount != -1 || c.MinRetryInterval != time.Second || c.MaxRetryInterval != 5*time.Minute || c.KeepAlive != 25*time.Second {
+		if c.MaxRetryCount != -1 || c.MinRetryInterval != 2*time.Second || c.MaxRetryInterval != c.MinRetryInterval || c.KeepAlive != 25*time.Second {
 			t.Fatal("retry policy", c)
 		}
 		if c.Server != "https://example.com/custom/tunnel" || c.Fingerprint != "pinned" || c.Auth != "device:secret" {
@@ -55,7 +55,7 @@ func TestRealChiselRetriesInitialFailuresAndDroppedConnection(t *testing.T) {
 	s := state{Endpoint: fmt.Sprintf("http://127.0.0.1:%d", bp), Secret: "secret", Enrollment: &link.Enrollment{ID: "device", Fingerprint: server.GetFingerprint()}}
 	cfg := tunnelConfig(s, []string{fmt.Sprintf("R:127.0.0.1:%d:127.0.0.1:18022", rp)}, nil, "")
 	cfg.MinRetryInterval = 20 * time.Millisecond
-	cfg.MaxRetryInterval = 50 * time.Millisecond
+	cfg.MaxRetryInterval = cfg.MinRetryInterval
 	var attempts atomic.Int32
 	sockets := make(chan net.Conn, 16)
 	cfg.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {

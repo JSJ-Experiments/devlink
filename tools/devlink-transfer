@@ -2,7 +2,7 @@
 """Resumable parallel-chunk file transfers over ordinary SSH (no SFTP needed).
 
 Re-run exactly the same command to resume. Ctrl-C leaves verified chunks in
-place. Network failures automatically pause/retry with bounded backoff.
+place. Network failures automatically pause/retry with a fixed two-second delay.
 """
 import argparse
 import concurrent.futures
@@ -61,7 +61,7 @@ class SSH:
         self.command += [f'{args.user}@{args.host}']
 
     def run(self, script, data=None):
-        delay, attempt = 1, 0
+        delay, attempt = 2, 0
         while not self.stop.is_set():
             attempt += 1
             with self.lane_lock:
@@ -100,7 +100,6 @@ class SSH:
                 raise RuntimeError(f'Retry limit reached: {msg}')
             say(f'Connection interrupted; pausing {delay}s then retrying: {msg[-240:]}')
             if self.stop.wait(delay): raise Cancelled()
-            delay = min(delay * 2, 60)
         raise Cancelled()
 
     def meta(self, path):

@@ -15,3 +15,4 @@
 - No default lane expiry in WebUI/transfers; optional renewable leases remain available.
 - GitHub Actions builds run on Blacksmith.
 - Explicit unlimited Chisel library retries on all lanes, with disconnect/reconnect regression tests.
+- Fixed two-second retries (no exponential backoff) for every tunnel lane, enrollment and transfers.
