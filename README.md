@@ -185,4 +185,6 @@ ENDPOINT=https://YOUR_HOST/custom FINGERPRINT='BASE64_SHA256=' \
 
 GitHub Actions on Blacksmith runners builds all four Android architectures, runs lifecycle/auth/real-tunnel tests, publishes one module ZIP and self-contained amd64/arm64 origin bundles, and updates a moving `latest` prerelease. Module WebUI bundles the official `kernelsu` API locally (no external assets).
 
+Real-device maintenance results and test scope: [2026-10-04 validation](docs/maintenance-2026-10-04.md).
+
 Primary references: [Chisel](https://github.com/jpillora/chisel), [KernelSU module guide](https://kernelsu.org/guide/module.html), [KernelSU WebUI](https://kernelsu.org/guide/module-webui.html). Box's local tested implementation informed the Dropbear patch and ADB property/firewall handling.
