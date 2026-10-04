@@ -47,6 +47,20 @@ class Transfer(unittest.TestCase):
   self.src.write_bytes(b'new');r=self.run_tool('push',self.src,self.remote);self.assertEqual(r.returncode,1);self.assertEqual(self.remote.read_bytes(),b'')
   r=self.run_tool('push',self.src,self.remote,'--overwrite');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(self.remote.read_bytes(),b'new')
 class Lanes(unittest.TestCase):
+ def test_transport_retry_delay_never_grows(self):
+  ns=runpy.run_path(str(TOOL));waits=[]
+  class Stop:
+   def is_set(self):return False
+   def wait(self,seconds):waits.append(seconds);return False
+  class Process:
+   def __init__(self,code):self.returncode=code
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def communicate(self,timeout=None):return (b'result',b'connection lost')
+  args=argparse.Namespace(host='127.0.0.1',port=18622,user='root',identity=None,timeout=30,retries=0)
+  with patch('subprocess.Popen',side_effect=[Process(255),Process(255),Process(255),Process(0)]):
+   self.assertEqual(ns['SSH'](args,stop=Stop()).run('command'),b'result')
+  self.assertEqual(waits,[2,2,2])
  def test_same_frontend_port_no_default_expiry_and_restore(self):
   ns=runpy.run_path(str(TOOL));calls=[]
   previous={'ssh_port':18622,'lanes_available':4,'lanes':1}
