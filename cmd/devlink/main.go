@@ -496,7 +496,7 @@ func setupSSH(s state) (*exec.Cmd, error) {
 			return nil, fmt.Errorf("host key: %s: %w", b, e)
 		}
 	}
-	c := exec.Command(filepath.Join(mod, "bin", "dropbear"), "-F", "-E", "-s", "-g", "-j", "-p", "127.0.0.1:18022", "-P", path("dropbear.pid"), "-r", key, "-D", sshDir, "-I", "600")
+	c := exec.Command(filepath.Join(mod, "bin", "dropbear"), "-F", "-e", "-p", "127.0.0.1:18022", "-P", path("dropbear.pid"), "-r", key, "-D", sshDir, "-I", "600")
 	c.Env = append(os.Environ(), "HOME="+sshDir, "PATH="+filepath.Join(mod, "bin")+":/system/bin:/system/xbin:/vendor/bin")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

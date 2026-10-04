@@ -20,9 +20,9 @@ SH
 chmod 0700 /data/adb/devlink/devlink
 # First installation is ready to use for two hours after first boot, then off.
 # Upgrades preserve the user's on/off decision and existing deadline.
-if [ ! -f /data/adb/devlink/state.json ]; then
+if [ ! -f /data/adb/devlink/installed ]; then
  DEVLINK_MODULE="$MODPATH" "$MODPATH/bin/devlink" init || abort 'Cannot initialize DevLink'
- touch /data/adb/devlink/first-boot
+ touch /data/adb/devlink/first-boot /data/adb/devlink/installed
 fi
 ui_print '- First boot: auto-enroll and enable for 2h, then turn off'
 ui_print '- CLI: su -c "/data/adb/devlink/devlink on 2h"'

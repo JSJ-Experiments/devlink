@@ -46,7 +46,8 @@ class Cancelled(Exception):
     pass
 
 class SSH:
-    def __init__(self, args):
+    def __init__(self, args, stop=STOP):
+        self.stop = stop
         self.args = args
         self.ports = [args.port]
         self.cursor = 0
@@ -60,7 +61,7 @@ class SSH:
 
     def run(self, script, data=None):
         delay, attempt = 1, 0
-        while not STOP.is_set():
+        while not self.stop.is_set():
             attempt += 1
             with self.lane_lock:
                 port = self.ports[self.cursor % len(self.ports)]
@@ -71,7 +72,7 @@ class SSH:
                 started = time.monotonic()
                 first = True
                 while True:
-                    if STOP.is_set():
+                    if self.stop.is_set():
                         p.kill(); p.communicate()
                         raise Cancelled()
                     try:
@@ -94,7 +95,7 @@ class SSH:
             if self.args.retries and attempt >= self.args.retries:
                 raise RuntimeError(f'Retry limit reached: {msg}')
             say(f'Connection interrupted; pausing {delay}s then retrying: {msg[-240:]}')
-            if STOP.wait(delay):
+            if self.stop.wait(delay):
                 raise Cancelled()
             delay = min(delay * 2, 60)
         raise Cancelled()
@@ -237,7 +238,7 @@ def transfer(args, ssh):
             assembly = f'cat {qw}/*.chunk > {temp}' if total else f': > {temp}'
             # Recheck destination immediately before commit. Temp is alongside destination.
             gate = '' if args.overwrite else f'if test -e {dest}; then test "$(sha256sum {dest} | cut -d " " -f 1)" = {sha} || exit 73; fi; '
-            commit = f'mv -f {temp} {dest}' if args.overwrite else f'mv -n {temp} {dest}; test "$(sha256sum {dest} | cut -d " " -f 1)" = {sha}'
+            commit = f'mv -f {temp} {dest}' if args.overwrite else f'mv -n {temp} {dest}; test "$(sha256sum {dest} | cut -d " " -f 1)" = {sha}; rm -f {temp}'
             ssh.run(f'set -eu; umask 077; {assembly}; test "$(sha256sum {temp} | cut -d " " -f 1)" = {sha}; {gate}{commit}')
             if not args.keep_chunks: ssh.run(f'rm -rf {qw}')
         else:
@@ -271,18 +272,20 @@ def tunnel_lanes(args, ssh):
     control = SSH(args)
     # Short leases are renewed while this process is alive. If the host crashes
     # or cannot reconnect to restore state, extra keepalives expire on-device.
-    previous = json.loads(control.run('devlink status --json'))
+    previous = json.loads(control.run(shlex.quote(args.client) + ' status --json'))
     ports = previous.get('ssh_ports') or [previous['ssh_port']]
     if args.tunnels > len(ports):
         raise RuntimeError(f"Only {len(ports)} lanes reserved; use --tunnels 1 or upgrade enrollment/server")
     requested = args.tunnels
     stopped = threading.Event()
-    control.run(f'devlink lanes {requested} 15m')
+    renew_args = argparse.Namespace(**vars(args)); renew_args.timeout=15; renew_args.retries=1
+    renewal = SSH(renew_args, stop=stopped)
+    control.run(shlex.quote(args.client) + f' lanes {requested} 15m')
     ssh.ports = ports[:requested]
     def renew():
         while not stopped.wait(120) and not STOP.is_set():
             try:
-                control.run(f'devlink lanes {requested} 15m')
+                renewal.run(shlex.quote(args.client) + f' lanes {requested} 15m')
             except Exception as e:
                 say(f'Lane renewal: {e}')
     thread = threading.Thread(target=renew, daemon=True); thread.start()
@@ -290,15 +293,16 @@ def tunnel_lanes(args, ssh):
         yield
     finally:
         stopped.set()
+        thread.join(timeout=2)
         # Cancellation must still clean up online devices. Offline cleanup gets
         # one bounded attempt; the lease then expires without a host watchdog.
         cleanup_args = argparse.Namespace(**vars(args)); cleanup_args.timeout = 10; cleanup_args.retries = 1
         cleanup = SSH(cleanup_args)
         old_lanes = previous.get('lanes', 1)
         remaining = previous.get('lanes_until', 0) - int(time.time())
-        command = f'devlink lanes {old_lanes}'
+        command = shlex.quote(args.client) + f' lanes {old_lanes}'
         if previous.get('lanes_until'):
-            command = f'devlink lanes {old_lanes} {remaining}s' if remaining > 0 else 'devlink lanes 1'
+            command = shlex.quote(args.client) + (f' lanes {old_lanes} {remaining}s' if remaining > 0 else ' lanes 1')
         was_stopped = STOP.is_set()
         STOP.clear()
         try:
@@ -316,6 +320,7 @@ def main():
     parser.add_argument('--port', type=int, required=True, help='Device origin reverse SSH port')
     parser.add_argument('--user', default='root'); parser.add_argument('--identity')
     parser.add_argument('--jobs', type=int, default=4)
+    parser.add_argument('--client', default='/data/adb/modules/devlink/bin/devlink', help='On-device DevLink CLI path')
     parser.add_argument('--tunnels', type=int, default=4, help='Independent WebSocket/TCP lanes (1 for legacy SSH)')
     parser.add_argument('--chunk-size', type=int, default=8 * 1024 * 1024, help='Bytes per resumable chunk')
     parser.add_argument('--timeout', type=int, default=300, help='Timeout per SSH command, seconds')

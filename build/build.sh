@@ -29,6 +29,7 @@ for arch in $ARCHES; do
   patch -d "$src" -p1 < build/dropbear-android-authorized-keys.patch
   touch "$src/.patched"
  fi
+ cp build/dropbear-localoptions.h "$src/localoptions.h"
  (
   cd "$src"
   export CFLAGS='-Os -fPIE' LDFLAGS='-Wl,-z,relro,-z,now -pie'

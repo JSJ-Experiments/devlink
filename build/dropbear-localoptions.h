@@ -11,3 +11,6 @@
 #define DROPBEAR_SFTPSERVER 0
 #define DROPBEAR_SVR_AGENTFWD 0
 #define DO_MOTD 0
+/* Make bundled CLI/SCP available in root SSH sessions without a system mount. */
+#define DEFAULT_ROOT_PATH "/data/adb/modules/devlink/bin:/data/adb/devlink:/system/bin:/system/xbin:/vendor/bin:/bin"
+#define DEFAULT_PATH "/system/bin:/system/xbin:/vendor/bin:/bin"
