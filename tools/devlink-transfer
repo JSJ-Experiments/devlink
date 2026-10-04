@@ -55,7 +55,7 @@ class SSH:
         self.lane_lock = threading.Lock()
         self.command = ['ssh', '-T', '-p', str(args.port), '-o', 'BatchMode=yes',
                         '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ServerAliveInterval=10',
-                        '-o', 'ServerAliveCountMax=2']
+                        '-o', 'ServerAliveCountMax=2', '-o', 'ControlMaster=no', '-o', 'ControlPath=none']
         if args.identity:
             self.command += ['-i', args.identity]
         self.command += [f'{args.user}@{args.host}']
@@ -273,22 +273,24 @@ def tunnel_lanes(args, ssh):
         yield
         return
     control = SSH(args)
-    # Short leases are renewed while this process is alive. If the host crashes
-    # or cannot reconnect to restore state, extra keepalives expire on-device.
+    # No lane expiry by default. An explicitly requested lease is renewed while
+    # this process is alive; otherwise a host crash leaves lanes enabled.
     previous = json.loads(control.run(shlex.quote(args.client) + ' status --json'))
-    ports = previous.get('ssh_ports') or [previous['ssh_port']]
+    available = previous.get('lanes_available', 1)
+    ports = [previous['ssh_port']] * available
     if args.tunnels > len(ports):
         raise RuntimeError(f"Only {len(ports)} lanes reserved; use --tunnels 1 or upgrade enrollment/server")
     requested = args.tunnels
+    lease = (" " + shlex.quote(args.lane_lease)) if args.lane_lease else ""
     stopped = threading.Event()
     renew_args = argparse.Namespace(**vars(args)); renew_args.timeout=15; renew_args.retries=1
     renewal = SSH(renew_args, stop=stopped)
-    control.run(shlex.quote(args.client) + f' lanes {requested} 15m')
+    control.run(shlex.quote(args.client) + f' lanes {requested}{lease}')
     ssh.ports = ports[:requested]
     def renew():
-        while not stopped.wait(120) and not STOP.is_set():
+        while lease and not stopped.wait(120) and not STOP.is_set():
             try:
-                renewal.run(shlex.quote(args.client) + f' lanes {requested} 15m')
+                renewal.run(shlex.quote(args.client) + f' lanes {requested}{lease}')
             except Exception as e:
                 say(f'Lane renewal: {e}')
     thread = threading.Thread(target=renew, daemon=True); thread.start()
@@ -298,7 +300,7 @@ def tunnel_lanes(args, ssh):
         stopped.set()
         thread.join(timeout=2)
         # Cancellation must still clean up online devices. Offline cleanup gets
-        # one bounded attempt; the lease then expires without a host watchdog.
+        # one bounded attempt; only an explicitly requested lease expires.
         cleanup_args = argparse.Namespace(**vars(args)); cleanup_args.timeout = 10; cleanup_args.retries = 1
         cleanup = SSH(cleanup_args)
         old_lanes = previous.get('lanes', 1)
@@ -311,7 +313,8 @@ def tunnel_lanes(args, ssh):
         try:
             cleanup.run(command)
         except Exception as e:
-            say(f'Could not restore lane count now (extra lanes expire automatically): {e}')
+            recovery = 'extra lanes expire automatically' if lease else 'run devlink lanes 1 when reconnected'
+            say(f'Could not restore lane count now ({recovery}): {e}')
         finally:
             if was_stopped: STOP.set()
 
@@ -323,6 +326,7 @@ def main():
     parser.add_argument('--port', type=int, required=True, help='Device origin reverse SSH port')
     parser.add_argument('--user', default='root'); parser.add_argument('--identity')
     parser.add_argument('--jobs', type=int, default=4)
+    parser.add_argument('--lane-lease', default='', help='Optional extra-lane expiry, e.g. 15m; default no expiry')
     parser.add_argument('--client', default='/data/adb/modules/devlink/bin/devlink', help='On-device DevLink CLI path')
     parser.add_argument('--tunnels', type=int, default=4, help='Independent WebSocket/TCP lanes (1 for legacy SSH)')
     parser.add_argument('--chunk-size', type=int, default=8 * 1024 * 1024, help='Bytes per resumable chunk')

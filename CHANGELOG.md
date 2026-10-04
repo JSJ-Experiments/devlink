@@ -10,3 +10,7 @@
 
 - On-demand independent WebSocket/TCP lanes and a parallel checksum-verified transfer helper with disconnect retry, pause/resume and lane leases.
 - Immediate hot-root installation/updates and WebUI/CLI hot reload without reboot or replaying other modules.
+- Loopback-only agent discovery API and `devlink-devices --connected --json`.
+- One stable SSH port per device pools independent WebSocket lanes; no extra public lane ports.
+- No default lane expiry in WebUI/transfers; optional renewable leases remain available.
+- GitHub Actions builds run on Blacksmith.

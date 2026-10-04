@@ -44,3 +44,24 @@ func TestAtomicState(t *testing.T) {
 		t.Fatal(s, e)
 	}
 }
+
+func TestPoolAuthorizationNeverGrantsFrontend(t *testing.T) {
+	d := Enrollment{SSHPort: 18622, ADBPort: 18623, TunnelPorts: []int{22000, 22001}}
+	patterns := AllowedEnrollment(d)
+	for _, v := range []string{"R:127.0.0.1:18622", "R:127.0.0.1:22002", "127.0.0.1:22"} {
+		for _, p := range patterns {
+			if regexp.MustCompile(p).MatchString(v) {
+				t.Fatal("unauthorized", v)
+			}
+		}
+	}
+	for _, v := range []string{"R:127.0.0.1:22000", "R:127.0.0.1:22001", "R:127.0.0.1:18623"} {
+		ok := false
+		for _, p := range patterns {
+			ok = ok || regexp.MustCompile(p).MatchString(v)
+		}
+		if !ok {
+			t.Fatal("denied", v)
+		}
+	}
+}

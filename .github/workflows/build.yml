@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -45,6 +45,7 @@ jobs:
           done
           cp "dist/devlink-$VERSION.zip" dist/devlink.zip
           cp tools/devlink-transfer dist/devlink-transfer
+          cp tools/devlink-devices dist/devlink-devices
           cat > dist/update.json <<JSON
           {"version":"$VERSION","versionCode":$VERSION_CODE,"zipUrl":"https://github.com/JSJ-Experiments/devlink/releases/download/latest/devlink.zip","changelog":"https://raw.githubusercontent.com/JSJ-Experiments/devlink/main/CHANGELOG.md"}
           JSON

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import hashlib, json, os, pathlib, subprocess, tempfile, unittest
+import argparse, hashlib, json, os, pathlib, runpy, shlex, subprocess, tempfile, unittest
+from unittest.mock import patch
 TOOL = pathlib.Path(__file__).resolve().parents[1] / 'tools/devlink-transfer'
 MOCK = '''#!/usr/bin/env python3
 import os,sys,subprocess,pathlib,time
@@ -45,4 +46,29 @@ class Transfer(unittest.TestCase):
   self.src.write_bytes(b'');r=self.run_tool('push',self.src,self.remote);self.assertEqual(r.returncode,0,r.stderr);r=self.run_tool('pull',self.remote,self.dest);self.assertEqual(r.returncode,0,r.stderr)
   self.src.write_bytes(b'new');r=self.run_tool('push',self.src,self.remote);self.assertEqual(r.returncode,1);self.assertEqual(self.remote.read_bytes(),b'')
   r=self.run_tool('push',self.src,self.remote,'--overwrite');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(self.remote.read_bytes(),b'new')
+class Lanes(unittest.TestCase):
+ def test_same_frontend_port_no_default_expiry_and_restore(self):
+  ns=runpy.run_path(str(TOOL));calls=[]
+  previous={'ssh_port':18622,'lanes_available':4,'lanes':1}
+  class FakeSSH:
+   def __init__(self,*a,**kw):self.ports=[]
+   def run(self,command):
+    calls.append(command)
+    return json.dumps(previous) if command.endswith('status --json') else ''
+  args=argparse.Namespace(tunnels=4,client='/devlink',lane_lease='',timeout=30,retries=0)
+  ssh=FakeSSH()
+  with patch.dict(ns['tunnel_lanes'].__wrapped__.__globals__,SSH=FakeSSH):
+   with ns['tunnel_lanes'](args,ssh):self.assertEqual(ssh.ports,[18622]*4)
+  self.assertEqual(calls,['/devlink status --json','/devlink lanes 4','/devlink lanes 1'])
+ def test_explicit_lease_is_one_shell_argument(self):
+  ns=runpy.run_path(str(TOOL));calls=[]
+  class FakeSSH:
+   def __init__(self,*a,**kw):self.ports=[]
+   def run(self,command):
+    calls.append(command)
+    return json.dumps({'ssh_port':18622,'lanes_available':4,'lanes':1}) if command.endswith('status --json') else ''
+  args=argparse.Namespace(tunnels=4,client='/devlink',lane_lease='15m; evil',timeout=30,retries=0)
+  with patch.dict(ns['tunnel_lanes'].__wrapped__.__globals__,SSH=FakeSSH):
+   with ns['tunnel_lanes'](args,FakeSSH()):pass
+  self.assertEqual(shlex.split(calls[1]),['/devlink','lanes','4','15m; evil'])
 if __name__=='__main__':unittest.main()

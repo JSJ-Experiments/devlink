@@ -17,6 +17,13 @@ func Allowed(sshPort, adbPort int) []string {
 	return []string{fmt.Sprintf(`^R:127\.0\.0\.1:%d$`, sshPort), fmt.Sprintf(`^R:127\.0\.0\.1:%d$`, adbPort)}
 }
 func AllowedEnrollment(d Enrollment) []string {
+	if len(d.TunnelPorts) > 0 {
+		a := []string{fmt.Sprintf(`^R:127\.0\.0\.1:%d$`, d.ADBPort)}
+		for _, p := range d.TunnelPorts {
+			a = append(a, fmt.Sprintf(`^R:127\.0\.0\.1:%d$`, p))
+		}
+		return a
+	}
 	a := Allowed(d.SSHPort, d.ADBPort)
 	for _, p := range d.SSHPorts {
 		if p != d.SSHPort {
@@ -26,6 +33,9 @@ func AllowedEnrollment(d Enrollment) []string {
 	return a
 }
 func LanePorts(d Enrollment) []int {
+	if len(d.TunnelPorts) > 0 {
+		return d.TunnelPorts
+	}
 	if len(d.SSHPorts) == 0 {
 		return []int{d.SSHPort}
 	}
@@ -52,6 +62,7 @@ type Enrollment struct {
 	Secret      string    `json:"secret,omitempty"`
 	Label       string    `json:"label"`
 	SSHPort     int       `json:"ssh_port"`
+	TunnelPorts []int     `json:"tunnel_ports,omitempty"`
 	SSHPorts    []int     `json:"ssh_ports,omitempty"`
 	ADBPort     int       `json:"adb_port"`
 	Fingerprint string    `json:"fingerprint"`

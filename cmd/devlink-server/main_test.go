@@ -35,7 +35,7 @@ func TestEnrollment(t *testing.T) {
 	}
 	var a link.Enrollment
 	json.Unmarshal(w.Body.Bytes(), &a)
-	if a.ID != link.Identity(s) || a.SSHPort == a.ADBPort || len(a.SSHPorts) != 4 {
+	if a.ID != link.Identity(s) || a.SSHPort == a.ADBPort || len(a.TunnelPorts) != 4 {
 		t.Fatal(a)
 	}
 	w = request(r, s)

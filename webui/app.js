@@ -14,7 +14,7 @@ async function refresh() {
     const s = JSON.parse(await run(['status', '--json']));
     $('state').textContent = !s.enabled ? 'Off · no background process' : s.connected ? 'Connected' : s.running ? 'Connecting / reconnecting' : 'Enabled · stopped (tap Enable to retry)';
     $('adb-state').textContent = s.adb ? 'ADB requested' : 'ADB off';
-    $('details').textContent = [s.id && `Device: ${s.id}`, s.ssh_port && `SSH: root@127.0.0.1:${s.ssh_port} (on origin)`, s.adb_port && `ADB: 127.0.0.1:${s.adb_port} (on origin)`, s.until && `Turns off: ${new Date(s.until * 1000).toLocaleString()}`, s.ssh_ports && `SSH lane ports: ${s.ssh_ports.join(", ")} · active ${s.lanes}`, s.error && `Last error: ${s.error}`].filter(Boolean).join('\n');
+    $('details').textContent = [s.id && `Device: ${s.id}`, s.ssh_port && `SSH: root@127.0.0.1:${s.ssh_port} (on origin)`, s.adb_port && `ADB: 127.0.0.1:${s.adb_port} (on origin)`, s.until && `Turns off: ${new Date(s.until * 1000).toLocaleString()}`, s.lanes_available && `Independent lanes: ${s.lanes} active / ${s.lanes_available} available`, s.error && `Last error: ${s.error}`].filter(Boolean).join('\n');
     if (document.activeElement !== $('endpoint')) $('endpoint').value = s.endpoint;
     if (document.activeElement !== $('tls-name')) $('tls-name').value = s.tls_name || '';
     $('http').checked = !!s.allow_http;
@@ -34,7 +34,7 @@ $('off').onclick = () => action(['off']);
 $('reload').onclick = () => action(['reload']);
 $('adb-on').onclick = () => action(['adb', 'on']);
 $('adb-off').onclick = () => action(['adb', 'off']);
-$('lanes-on').onclick = () => action(['lanes', '4', '15m']);
+$('lanes-on').onclick = () => action(['lanes', '4']);
 $('lanes-off').onclick = () => action(['lanes', '1']);
 $('save-endpoint').onclick = () => {
   const args = ['endpoint', $('endpoint').value];

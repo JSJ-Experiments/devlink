@@ -8,7 +8,7 @@
 <div class="row"><input id="duration" value="2h" aria-label="Duration" style="width:90px"><button id="timed">Enable with timer</button></div>
 <p><small>Permanent enable survives reboot. Timers keep their original deadline. Off stops the tunnel and DevLink SSH.</small></p></section>
 <section><h3 id="adb-state">ADB</h3><button id="adb-on">ADB on</button><button id="adb-off">ADB off</button><p><small>Reuses Box's loopback ADB when present. Otherwise temporarily adds a protected loopback listener. Wireless Debugging remains configured; an owned listener requires an adbd restart.</small></p></section>
-<section><h3>Transfer lanes</h3><button id="lanes-on">4 lanes for 15m</button><button id="lanes-off">1 lane (normal)</button><p><small>The host transfer helper manages these automatically. Extra lanes use separate WebSocket/TCP connections; they add keepalives while enabled.</small></p></section>
+<section><h3>Transfer lanes</h3><button id="lanes-on">4 lanes until disabled</button><button id="lanes-off">1 lane (normal)</button><p><small>The host transfer helper manages these automatically. All lanes share one stable SSH port via the origin pool. Each uses a separate WebSocket/TCP connection and adds keepalives while enabled.</small></p></section>
 <section><h3>Origin and subpath</h3><input id="endpoint" type="url" placeholder="https://cfarm.jadenjsj.com/devlink" aria-label="Endpoint URL">
 <input id="tls-name" type="text" placeholder="Optional TLS hostname for direct-IP HTTPS" aria-label="TLS hostname">
 <label><input id="http" type="checkbox">Allow unencrypted HTTP (unsafe)</label><br><button id="save-endpoint">Save endpoint</button>

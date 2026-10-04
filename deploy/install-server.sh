@@ -20,6 +20,8 @@ fi
 install -m 0644 "$SSH_KEYS" /etc/devlink/authorized_keys
 [[ -z ${ADB_KEY:-} ]] || install -m 0644 "$ADB_KEY" /etc/devlink/adbkey.pub
 sed "s#^ExecStart=.*#ExecStart=/usr/local/lib/devlink/devlink-server --path $PREFIX#" deploy/devlink-server.service > /etc/systemd/system/devlink-server.service
+install -m 0755 tools/devlink-transfer /usr/local/bin/devlink-transfer
+install -m 0755 tools/devlink-devices /usr/local/bin/devlink-devices
 systemctl daemon-reload
 systemctl enable devlink-server
 systemctl restart devlink-server

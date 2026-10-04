@@ -44,22 +44,22 @@ type state struct {
 	Enrollment *link.Enrollment `json:"enrollment,omitempty"`
 }
 type status struct {
-	Lanes      int    `json:"lanes"`
-	LanesUntil int64  `json:"lanes_until,omitempty"`
-	SSHPorts   []int  `json:"ssh_ports,omitempty"`
-	Enabled    bool   `json:"enabled"`
-	Running    bool   `json:"running"`
-	Connected  bool   `json:"connected"`
-	ADB        bool   `json:"adb"`
-	Until      int64  `json:"until"`
-	Endpoint   string `json:"endpoint"`
-	ID         string `json:"id,omitempty"`
-	SSHPort    int    `json:"ssh_port,omitempty"`
-	ADBPort    int    `json:"adb_port,omitempty"`
-	TLSName    string `json:"tls_name,omitempty"`
-	AllowHTTP  bool   `json:"allow_http,omitempty"`
-	Version    string `json:"version"`
-	Error      string `json:"error,omitempty"`
+	Lanes          int    `json:"lanes"`
+	LanesUntil     int64  `json:"lanes_until,omitempty"`
+	LanesAvailable int    `json:"lanes_available,omitempty"`
+	Enabled        bool   `json:"enabled"`
+	Running        bool   `json:"running"`
+	Connected      bool   `json:"connected"`
+	ADB            bool   `json:"adb"`
+	Until          int64  `json:"until"`
+	Endpoint       string `json:"endpoint"`
+	ID             string `json:"id,omitempty"`
+	SSHPort        int    `json:"ssh_port,omitempty"`
+	ADBPort        int    `json:"adb_port,omitempty"`
+	TLSName        string `json:"tls_name,omitempty"`
+	AllowHTTP      bool   `json:"allow_http,omitempty"`
+	Version        string `json:"version"`
+	Error          string `json:"error,omitempty"`
 }
 
 var dir, mod string
@@ -266,7 +266,7 @@ func getStatus() status {
 	if s.Enrollment != nil {
 		v.ID = s.Enrollment.ID
 		v.SSHPort = s.Enrollment.SSHPort
-		v.SSHPorts = link.LanePorts(*s.Enrollment)
+		v.LanesAvailable = len(link.LanePorts(*s.Enrollment))
 		v.ADBPort = s.Enrollment.ADBPort
 	}
 	return v
@@ -497,9 +497,9 @@ func enroll(ctx context.Context, s state) (*link.Enrollment, error) {
 	if en.ID != link.Identity(s.Secret) || en.Secret != s.Secret || len(en.Fingerprint) != 44 || en.SSHPort < 1024 || en.SSHPort > 65535 || en.ADBPort < 1024 || en.ADBPort > 65535 || en.SSHPort == en.ADBPort || strings.TrimSpace(en.SSHKeys) == "" {
 		return nil, errors.New("invalid enrollment response")
 	}
-	seen := map[int]bool{en.ADBPort: true}
+	seen := map[int]bool{en.ADBPort: true, en.SSHPort: true}
 	ports := link.LanePorts(en)
-	if len(ports) > 16 || ports[0] != en.SSHPort {
+	if len(en.TunnelPorts) == 0 || len(ports) > 16 {
 		return nil, errors.New("invalid SSH lanes")
 	}
 	for _, p := range ports {
@@ -655,7 +655,7 @@ func daemon() (retErr error) {
 		link.WriteJSON(path("status.json"), v)
 	}
 	update(false, "")
-	for delay := time.Second; s.Enrollment == nil; {
+	for delay := time.Second; s.Enrollment == nil || len(s.Enrollment.TunnelPorts) == 0; {
 		en, e := enroll(ctx, s)
 		if e == nil {
 			// Preserve control changes made while enrollment was in flight.
@@ -730,7 +730,7 @@ func daemon() (retErr error) {
 			}
 		}()
 	}
-	remotes := []string{fmt.Sprintf("R:127.0.0.1:%d:127.0.0.1:18022", s.Enrollment.SSHPort)}
+	remotes := []string{fmt.Sprintf("R:127.0.0.1:%d:127.0.0.1:18022", link.LanePorts(*s.Enrollment)[0])}
 	if adbPort > 0 {
 		remotes = append(remotes, fmt.Sprintf("R:127.0.0.1:%d:127.0.0.1:%d", s.Enrollment.ADBPort, adbPort))
 	}

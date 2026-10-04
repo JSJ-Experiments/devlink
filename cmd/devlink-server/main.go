@@ -30,6 +30,7 @@ import (
 
 type registry struct {
 	mu           sync.Mutex
+	ctx          context.Context
 	path         string
 	devices      []link.Enrollment
 	ch           *chserver.Server
@@ -107,30 +108,26 @@ func (r *registry) enroll(w http.ResponseWriter, q *http.Request) {
 		http.Error(w, "no free port pairs", 503)
 		return
 	}
-	lanePorts := []int{sp}
-	used[sp] = true
-	used[ap] = true
-	count := r.lanes
-	if count < 1 {
-		count = 1
-	}
-	for p := 18622; p < 19622 && len(lanePorts) < count; p++ {
-		if used[p] {
-			continue
-		}
-		if portFree(p) {
-			lanePorts = append(lanePorts, p)
-			used[p] = true
-		}
-	}
-	if len(lanePorts) < count {
-		http.Error(w, "no free lane ports", 503)
+	tunnelPorts, e := r.reserveBackends()
+	if e != nil {
+		http.Error(w, e.Error(), 503)
 		return
 	}
-	d := link.Enrollment{SSHPorts: lanePorts, ID: id, Secret: req.Secret, Label: req.Label, SSHPort: sp, ADBPort: ap, Fingerprint: r.ch.GetFingerprint(), SSHKeys: r.keys, ADBKey: r.adbkey, Created: time.Now().UTC()}
+	d := link.Enrollment{TunnelPorts: tunnelPorts, ID: id, Secret: req.Secret, Label: req.Label, SSHPort: sp, ADBPort: ap, Fingerprint: r.ch.GetFingerprint(), SSHKeys: r.keys, ADBKey: r.adbkey, Created: time.Now().UTC()}
+	var front net.Listener
+	if r.ctx != nil {
+		front, e = startSSHPool(r.ctx, d)
+		if e != nil {
+			http.Error(w, "SSH frontend unavailable", 503)
+			return
+		}
+	}
 	r.devices = append(r.devices, d)
 	if e := link.WriteJSON(r.path, r.devices); e != nil {
 		r.devices = r.devices[:len(r.devices)-1]
+		if front != nil {
+			front.Close()
+		}
 		http.Error(w, "persistence failed", 500)
 		return
 	}
@@ -183,6 +180,7 @@ func ensureKey(path string) error {
 func main() {
 	state := flag.String("state", "/var/lib/devlink", "state directory")
 	listen := flag.String("listen", "127.0.0.1:18790", "loopback enrollment/proxy listener")
+	admin := flag.String("admin", "127.0.0.1:18792", "loopback-only agent discovery listener; never proxy publicly")
 	backend := flag.String("backend", "127.0.0.1:18791", "loopback chisel listener")
 	keysPath := flag.String("ssh-keys", "/etc/devlink/authorized_keys", "operator SSH public keys")
 	adbPath := flag.String("adb-key", "/etc/devlink/adbkey.pub", "optional operator ADB public key")
@@ -209,7 +207,7 @@ func main() {
 		case "devices":
 			for _, d := range ds {
 				fmt.Printf("%s\t%q\tSSH 127.0.0.1:%d\tADB 127.0.0.1:%d\trevoked=%t\n", d.ID, d.Label, d.SSHPort, d.ADBPort, d.Revoked)
-				fmt.Printf("  SSH lanes: %v\n", link.LanePorts(d))
+				fmt.Printf("  Independent lanes available: %d\n", len(link.LanePorts(d)))
 			}
 		case "revoke":
 			found := false
@@ -231,7 +229,7 @@ func main() {
 		}
 		return
 	}
-	for _, a := range []string{*listen, *backend} {
+	for _, a := range []string{*listen, *backend, *admin} {
 		h, _, e := net.SplitHostPort(a)
 		if e != nil || h != "127.0.0.1" {
 			log.Fatal("listeners must bind 127.0.0.1")
@@ -263,6 +261,9 @@ func main() {
 	if e = r.load(); e != nil {
 		log.Fatal(e)
 	}
+	if e = r.migrateBackends(); e != nil {
+		log.Fatal(e)
+	}
 	for _, d := range r.devices {
 		if !d.Revoked {
 			if e = ch.AddUser(d.ID, d.Secret, link.AllowedEnrollment(d)...); e != nil {
@@ -272,6 +273,14 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	r.ctx = ctx
+	for _, d := range r.devices {
+		if !d.Revoked {
+			if _, e = startSSHPool(ctx, d); e != nil {
+				log.Fatal(e)
+			}
+		}
+	}
 	host, port, _ := net.SplitHostPort(*backend)
 	if e = ch.StartContext(ctx, host, port); e != nil {
 		log.Fatal(e)
@@ -291,7 +300,16 @@ func main() {
 	mux.HandleFunc(*prefix+"/health", func(w http.ResponseWriter, q *http.Request) { fmt.Fprintln(w, "devlink ok") })
 	mux.HandleFunc("/", func(w http.ResponseWriter, q *http.Request) { http.NotFound(w, q) })
 	h := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
-	go func() { <-ctx.Done(); h.Close() }()
+	adminMux := http.NewServeMux()
+	adminMux.HandleFunc("/devices", r.devicesHandler)
+	adminServer := &http.Server{Addr: *admin, Handler: adminMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
+	go func() {
+		if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("discovery API: %v", err)
+			cancel()
+		}
+	}()
+	go func() { <-ctx.Done(); h.Close(); adminServer.Close() }()
 	log.Printf("DevLink %s fingerprint=%s", *listen, ch.GetFingerprint())
 	if e = h.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 		log.Fatal(e)
